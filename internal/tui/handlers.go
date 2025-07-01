@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/codek7-services/codek7-tui/internal"
 	proto "github.com/codek7-services/codek7-tui/pkg/pb"
@@ -80,40 +82,80 @@ func (v *Views) handleUpload() {
 
 func (v *Views) processUpload(filePath, title, description string) {
 	if filePath == "" || title == "" {
-		v.showMessage("Please fill in required fields (File Path and Title)")
+		v.showMessage("❌ Please fill in required fields (File Path and Title)")
 		return
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		v.showMessage("File does not exist: " + filePath)
+	// Check if file exists and get file info
+	fileInfo, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
+		v.showMessage("❌ File does not exist: " + filePath)
+		return
+	}
+	if err != nil {
+		v.showMessage("❌ Cannot access file: " + err.Error())
+		return
+	}
+
+	// Check file size (limit to 500MB as mentioned in server code)
+	maxSize := int64(500 * 1024 * 1024) // 500MB
+	if fileInfo.Size() > maxSize {
+		v.showMessage(fmt.Sprintf("❌ File too large: %.2f MB (max 500MB)", float64(fileInfo.Size())/(1024*1024)))
 		return
 	}
 
 	user := v.State.GetUser()
 	if user == nil {
-		v.showMessage("No user logged in")
+		v.showMessage("❌ No user logged in")
 		return
 	}
 
 	client := v.State.GetGRPCClient()
 	if client == nil {
-		v.showMessage("gRPC client not initialized")
+		v.showMessage("❌ gRPC client not initialized")
 		return
 	}
 
-	// Show progress message
-	v.showMessage("Uploading video... This may take a while.")
+	// Show detailed progress message
+	v.showMessage(fmt.Sprintf("📤 Uploading video...\n\n"+
+		"📁 File: %s\n"+
+		"📏 Size: %.2f MB\n"+
+		"👤 User: %s\n\n"+
+		"⏳ This may take a while depending on file size.\n"+
+		"The file will be processed in real-time via Kafka streams.",
+		fileInfo.Name(),
+		float64(fileInfo.Size())/(1024*1024),
+		user.Username))
 
 	go func() {
 		err := internal.UploadVideo(client, filePath, title, description, user.Id)
 		v.App.QueueUpdateDraw(func() {
 			if err != nil {
-				v.showError(err)
+				v.showError(fmt.Errorf("Upload failed: %v", err))
 			} else {
-				v.showMessage("Video uploaded successfully!")
-				v.loadUserVideos() // Refresh video list
-				v.ShowDashboardView()
+				// Success message with next steps
+				v.showMessage("✅ Video uploaded successfully!\n\n" +
+					"🎯 Your video is now being processed.\n" +
+					"📡 You'll receive real-time notifications when ready.\n" +
+					"🔄 The video list will be updated automatically.")
+
+				// Add a notification about the upload
+				v.State.AddNotification(Notification{
+					ID:      fmt.Sprintf("upload-%d", time.Now().Unix()),
+					Type:    "upload",
+					Message: fmt.Sprintf("Video '%s' uploaded successfully", title),
+					Time:    time.Now().Format("15:04:05"),
+				})
+
+				// Refresh data and return to dashboard
+				v.loadUserVideos()
+
+				// Auto-return to dashboard after showing success
+				time.Sleep(2 * time.Second)
+				v.App.QueueUpdateDraw(func() {
+					v.Pages.RemovePage("message")
+					v.ShowDashboardView()
+				})
 			}
 		})
 	}()

@@ -39,6 +39,10 @@ func NewApp() *App {
 
 	views := NewViews(app, pages, state)
 
+	// Initialize WebSocket manager
+	wsManager := NewWebSocketManager(state, app)
+	views.SetWebSocketManager(wsManager)
+
 	// Create main menu
 	mainMenu := tview.NewList().
 		AddItem("🔑 Login", "Login to your account", 'l', views.ShowLoginView).
@@ -72,10 +76,11 @@ func NewApp() *App {
 	pages.AddPage("main", mainFlex, true, true)
 
 	tuiApp := &App{
-		App:   app,
-		Pages: pages,
-		State: state,
-		Views: views,
+		App:       app,
+		Pages:     pages,
+		State:     state,
+		Views:     views,
+		WSManager: wsManager,
 	}
 
 	// Set the app root
